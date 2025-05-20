@@ -2,6 +2,7 @@ import React from 'react'
 import Link from 'next/link';
 import { FcGoogle } from 'react-icons/fc';
 
+
 const page = () => {
   return (
     <div className="flex justify-center items-center min-h-screen bg-white">
