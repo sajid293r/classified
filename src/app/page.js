@@ -1,217 +1,273 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { FaMicrophone, FaArrowUp, FaUserCircle } from "react-icons/fa";
-import { FiLogOut } from "react-icons/fi";
-import Image from "next/image";
+import { useSelector, useDispatch } from "react-redux";
+import { FaArrowUp, FaQrcode, FaBars, FaTimes } from "react-icons/fa";
 import { LayoutDashboard } from "lucide-react";
-import Shaikimage from "../app/image/Shaik.png";
+import sls from "../services/ServerLinkService";
+import VoiceChatService from "../services/VoiceChatService";
+import { setServerConnected } from '../store/connectionSlice';
+import { addMessage, setPendingBotMessage, clearPendingBotMessage } from '../store/chatSlice';
+import QrCodeModal from "./components/QrCodeModal";
+import qrImg from "./image/QRcode.png";
 
-const Page = ({ onSubmit = (query) => console.log("Submitted:", query) }) => {
+const Page = () => {
   const [query, setQuery] = useState("");
-  const [history, setHistory] = useState([]);
-  const [showText, setShowText] = useState(false);
   const [isOpen, setIsOpen] = useState(true);
-  const [loggedIn, setLoggedIn] = useState(false); // Simulate login state
-  const [open, setOpen] = useState(false);
-  const tooltipRef = useRef(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const dispatch = useDispatch();
+  const chatHistory = useSelector((state) => state.chat.history);
+  const pendingBotMessage = useSelector((state) => state.chat.pendingBotMessage);
+  const voiceChatRef = useRef(null);
+  const voiceSetupDone = useRef(false);
+  const [selectedModel, setSelectedModel] = useState("ChatGPT 3.5");
+  const [showShaikUI, setShowShaikUI] = useState(true);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
+  // Connect to backend and setup VoiceChatService only once
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (tooltipRef.current && !tooltipRef.current.contains(event.target)) {
-        setOpen(false);
-      }
-      if (tooltipRef.current && !tooltipRef.current.contains(event.target)) {
-        setOpen(false);
-      }
+    if (voiceChatRef.current) return;
+    console.log("Connecting to server...");
+    sls.on_connect = (channel) => {
+      console.log("Server connected, channel:", channel);
+      voiceChatRef.current = new VoiceChatService(channel, true);
+      console.log("VoiceChatService instance created", voiceChatRef.current);
+      // Streaming bot message handlers
+      voiceChatRef.current.on_message = (msgObj) => {
+        let text = msgObj;
+        if (typeof msgObj === 'object' && msgObj !== null) {
+          text = msgObj.message || msgObj.content || (msgObj.choices && msgObj.choices[0]?.message?.content) || '';
+        }
+        if (msgObj.from === 'bot') {
+          if (typeof text === 'string' && text.trim() !== '') {
+            dispatch(addMessage({ message: text, from: 'bot' }));
+          }
+          dispatch(clearPendingBotMessage());
+        }
+      };
+      voiceChatRef.current.on_panel_input = (fragment) => {
+        // For text.delta streaming: only extract text
+        let text = fragment;
+        if (typeof fragment === 'object' && fragment !== null) {
+          text = fragment.message || fragment.content || (fragment.choices && fragment.choices[0]?.message?.content) || '';
+        }
+        if (typeof text === 'string' && text.trim() !== '') {
+          dispatch(setPendingBotMessage(text));
+        }
+      };
+      // QR code event handler
+      voiceChatRef.current.on_qr_image_get = () => {
+        setQrOpen(true);
+      };
+      dispatch(setServerConnected(true));
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+    sls.on_fail = (err) => {
+      console.log("Server connection failed:", err);
+      dispatch(setServerConnected(false));
     };
-  }, []);
-  const toggleSidebar = () => {
-    setIsOpen((prev) => !prev);
-  };
+    sls.connect();
+    // eslint-disable-next-line
+  }, [dispatch]);
 
+  // Send chat message
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (query.trim()) {
-      onSubmit(query);
-      setHistory((prev) => (prev.includes(query) ? prev : [query, ...prev]));
+    console.log("WebSocket ready?", voiceChatRef.current?.ws_is_ready());
+    if (query.trim() && voiceChatRef.current && voiceChatRef.current.ws_is_ready()) {
+      console.log("Sending user message:", query);
+      dispatch(addMessage({ message: query, from: "user" }));
+      voiceChatRef.current.send_text_message(query);
       setQuery("");
     }
   };
 
+  const toggleSidebar = () => {
+    setIsOpen((prev) => !prev);
+  };
+
+  // Prompt for audio permission on page load
+  useEffect(() => {
+    if (typeof window !== "undefined" && navigator.mediaDevices) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).catch((err) => {
+        console.warn("Audio permission denied or error:", err);
+      });
+    }
+  }, []);
+
   return (
-    <div className="flex min-h-screen bg-white relative">
-      {/* Sidebar (only for logged-in users) */}
-      {loggedIn && (
-        <div
-          className={`fixed top-0 left-0 z-30 h-screen bg-gray-100 transition-all duration-300 border-r border-gray-300 ${
-            isOpen ? "w-[200px] p-4" : "w-0 overflow-hidden"
-          }`}
-        >
-          <div className="flex justify-between items-center text-black mb-4">
-            <h2 className="text-lg font-bold mt-8">History</h2>
-          </div>
-          <ul className="flex flex-col gap-2 overflow-y-auto max-h-[80vh]">
-            {history.map((item, index) => (
-              <li
-                key={index}
-                className="bg-white p-2 rounded-xl shadow text-sm hover:bg-blue-50 cursor-pointer whitespace-nowrap"
-                onClick={() => setQuery(item)}
-              >
-                {item}
-              </li>
-            ))}
-          </ul>
+    <div className="flex flex-col h-screen bg-white relative overflow-hidden">
+      {/* Top bar: mobile hamburger, desktop full bar */}
+      {/* Mobile Hamburger */}
+      <div className="fixed top-0 left-0 w-full flex items-center justify-between px-2 py-2 z-50 bg-white/80 backdrop-blur-sm border-b border-gray-100 sm:hidden">
+        <button className="p-2 rounded-full hover:bg-gray-100" onClick={() => setShowMobileMenu(true)}>
+          <FaBars size={22} />
+        </button>
+        <div className="flex items-center gap-2">
+          <button className="p-2 rounded-full hover:bg-gray-100">
+            <FaQrcode size={22} />
+          </button>
         </div>
-      )}
-
-      {/* Sidebar Toggle Button */}
-      <LayoutDashboard
-        onClick={toggleSidebar}
-        className="cursor-pointer text-xl z-40 fixed top-4 left-4"
-      />
-
-      {/* Main Content */}
-      <div
-        className={`flex-1 flex flex-col transition-all duration-300 px-4 sm:px-6 py-2 min-h-screen w-full ${
-          loggedIn && isOpen ? "lg:ml-[200px]" : "lg:ml-0"
-        }`}
-      >
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-center ml-12 mb-4 gap-2">
-          <div className="flex items-center w-32 sm:w-auto border border-gray-300 rounded-2xl">
-            <select className="text-black p-2 rounded-2xl text-sm outline-none border-none">
+      </div>
+      {/* Mobile Dropdown Menu */}
+      {showMobileMenu && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-end">
+          <div className="bg-white w-64 h-full shadow-lg flex flex-col p-4 gap-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="font-bold text-lg">Menu</span>
+              <button onClick={() => setShowMobileMenu(false)} className="p-2"><FaTimes size={20} /></button>
+            </div>
+            <label className="font-medium mb-1">Model</label>
+            <select
+              value={selectedModel}
+              onChange={e => setSelectedModel(e.target.value)}
+              className="rounded-full border px-3 py-2 text-base bg-white shadow mb-2"
+            >
               <option>ChatGPT 3.5</option>
               <option>ChatGPT 4</option>
-              <option>ChatGPT Turbo</option>
+              <option>ChatGPT 4o</option>
             </select>
+            <button
+              className="bg-black text-white px-4 py-2 rounded-full w-full"
+              onClick={() => { setIsLoggedIn(true); setShowMobileMenu(false); }}
+            >
+              Login
+            </button>
+            <button className="border border-black text-black px-4 py-2 rounded-full w-full">
+              Signup
+            </button>
           </div>
-
-          <div className="flex gap-2 items-center">
-            {!loggedIn ? (
-              <>
-                <button
-                  onClick={() => setLoggedIn(true)}
-                  className="bg-black text-white p-2 px-4 rounded-2xl"
-                >
-                  Login
-                </button>
-                <button
-                  onClick={() => setLoggedIn(true)}
-                  className="border border-gray-300 text-gray-800 p-2 px-4 rounded-2xl"
-                >
-                  Signup
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={() => setOpen((open) => !open)}>
-                  <FaUserCircle size={28} className="text-gray-800" />
-                </button>
-                {/* tooltip */}
-                {open && (
-                  <div
-                    ref={tooltipRef}
-                    className="absolute  mt-16 -translate-x-1/2 w-20 border border-gray-300 text-black text-sm rounded shadow-lg p-2 z-10"
-                  >
-                    <button
-                      onClick={() => {
-                        setLoggedIn(false);
-                        setOpen(false); 
-                      }}
-                      className="text-black flex gap-2"
-                    >
-                      <FiLogOut className="mt-1" /> Logout
-                    </button>
-                  </div>
-                )}
-              </>
+        </div>
+      )}
+      {/* Desktop Top Bar */}
+      <div className="fixed top-0 left-0 w-full hidden sm:flex flex-row flex-wrap items-center justify-between gap-2 px-2 py-2 z-50 bg-white/80 backdrop-blur-sm border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <button className="p-2 rounded-full hover:bg-gray-100">
+            <FaQrcode size={22} />
+          </button>
+          <select
+            value={selectedModel}
+            onChange={e => setSelectedModel(e.target.value)}
+            className="rounded-full border px-3 py-1 text-base bg-white shadow"
+          >
+            <option>ChatGPT 3.5</option>
+            <option>ChatGPT 4</option>
+            <option>ChatGPT 4o</option>
+          </select>
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="bg-black text-white px-4 py-2 rounded-full"
+            onClick={() => setIsLoggedIn(true)}
+          >
+            Login
+          </button>
+          <button className="border border-black text-black px-4 py-2 rounded-full">
+            Signup
+          </button>
+        </div>
+      </div>
+      {/* Centered Shaikh UI with chat */}
+      {showShaikUI && (
+        <div className="flex flex-col items-center justify-between w-full h-full max-w-xs sm:max-w-xl mx-auto px-1 sm:px-4 pt-32 pb-16 sm:pt-36 sm:pb-8">
+          {/* Top: Shaik image and heading */}
+          <div className="flex flex-col items-center w-full">
+            <img
+              src={isRecording ? "/assistant-transformed.gif" : "/assistant-transformed.png"}
+              alt="Assistant"
+              className="w-24 h-24 sm:w-40 sm:h-40 md:w-48 md:h-48 rounded-full mb-2 shadow"
+            />
+            <div className="text-lg sm:text-xl font-medium mb-2 text-center">What can I help with?</div>
+          </div>
+          {/* Chat area */}
+          <div className="flex-1 min-h-0 w-full overflow-y-auto bg-white rounded-lg shadow-inner my-2 px-1 sm:px-2 py-3 sm:py-4">
+            {chatHistory.map((item, idx) => (
+              <div key={idx} className={`mb-2 text-left break-words text-sm sm:text-base text-black`}>
+                <b>{item.from === "user" ? "You" : item.from === "bot" ? "Assistant" : "System"}:</b>{" "}
+                {typeof item.message === 'string' ? item.message : ''}
+              </div>
+            ))}
+            {pendingBotMessage && (
+              <div className="text-left text-black animate-pulse mb-2 text-sm sm:text-base">
+                <b>Assistant:</b> {pendingBotMessage}
+              </div>
             )}
           </div>
-        </div>
-
-        {/* Image */}
-        <div className="flex justify-center items-center h-52">
-          {showText && (
-            <Image
-              src={Shaikimage}
-              alt="Voice Input"
-              width={300}
-              height={300}
-              className="rounded-full h-56 w-56 object-fill bg-gray-200"
-            />
-          )}
-        </div>
-
-        <h1 className="flex justify-center items-center py-2 text-center text-xl text-black [word-spacing:3px]">
-          What can I help with?
-        </h1>
-
-        {/* Input Form */}
-        <div className="w-full flex justify-center overflow-x-hidden">
+          {/* Input Form (fixed bottom on mobile, sticky on desktop) */}
           <form
             onSubmit={handleSubmit}
-            className="w-full max-w-2xl flex items-center gap-2 border border-gray-300 rounded-2xl px-4 py-2 bg-white shadow-lg"
+            className="w-full max-w-none sm:max-w-lg flex items-center gap-2 border border-gray-300 bg-white shadow-lg px-2 sm:px-4 py-2 rounded-none sm:rounded-2xl fixed bottom-0 left-0 sm:sticky sm:bottom-2 z-40 h-12"
           >
             <input
               type="text"
-              className="flex-grow outline-none bg-transparent text-gray-800 text-base placeholder:text-sm"
+              className="flex-grow min-w-[120px] outline-none bg-transparent text-gray-800 text-base sm:text-lg placeholder:text-sm h-10"
               placeholder="Ask anything"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              autoFocus
             />
-            {query.trim() ? (
-              <button
-                type="submit"
-                className="text-white bg-black hover:bg-black px-2 py-2 rounded-2xl transition"
+
+            {/* Large mic icon button (no background, no text) */}
+            <button
+              type="button"
+              className="flex items-center justify-center transition"
+              style={{ background: "transparent", border: "none" }}
+              onClick={async () => {
+                // Ensure VoiceChatService is ready
+                if (!voiceChatRef.current || !voiceChatRef.current.ws_is_ready()) {
+                  // Try to connect if not already
+                  if (!voiceChatRef.current) {
+                    await new Promise(resolve => {
+                      sls.on_connect = (channel) => {
+                        voiceChatRef.current = new VoiceChatService(channel, true);
+                        resolve();
+                      };
+                      sls.connect();
+                    });
+                  }
+                  // Wait for ws to be ready
+                  while (!voiceChatRef.current.ws_is_ready()) {
+                    await new Promise(r => setTimeout(r, 100));
+                  }
+                }
+                // Now proceed as before
+                if (!isRecording) {
+                  if (!voiceSetupDone.current) {
+                    await voiceChatRef.current.setup();
+                    voiceSetupDone.current = true;
+                  }
+                  voiceChatRef.current.start_recording();
+                  setIsRecording(true);
+                  setShowShaikUI(true);
+                } else {
+                  await voiceChatRef.current.stop_recording();
+                  setIsRecording(false);
+                }
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className={`w-10 h-10 ${isRecording ? "text-red-600" : "text-gray-400"}`}
               >
-                <FaArrowUp size={16} />
-              </button>
-            ) : (
-              <button
-                type="button"
-               
-                className="text-gray-500 hover:text-gray-700 transition"
-              >
-                <FaMicrophone size={20} />
-              </button>
-            )}
-            <div className="bg-black text-white rounded-3xl">
-              <button
-                inputstate="default"
-                state="disabled"
-                aria-label="Start voice mode"
-                className="relative flex h-9 items-center justify-center rounded-full bg-black text-white transition-colors disabled:text-gray-50 disabled:opacity-30 can-hover:hover:opacity-70 dark:bg-white dark:text-black min-w-8 p-2 cursor-pointer"
-                onClick={() => {
-                  setShowText(!showText);
-                  console.log("Voice input clicked, showText:", !showText);
-                }}>
-                <div className="flex items-center justify-center" >
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 18 18"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="icon-md"
-                   >
-                    <path
-                      d="M5.66699 14.4165V3.5835C5.66699 2.89314 6.22664 2.3335 6.91699 2.3335C7.6072 2.33367 8.16699 2.89325 8.16699 3.5835V14.4165C8.16699 15.1068 7.6072 15.6663 6.91699 15.6665C6.22664 15.6665 5.66699 15.1069 5.66699 14.4165ZM9.83301 11.9165V6.0835C9.83301 5.39325 10.3928 4.83367 11.083 4.8335C11.7734 4.8335 12.333 5.39314 12.333 6.0835V11.9165C12.333 12.6069 11.7734 13.1665 11.083 13.1665C10.3928 13.1663 9.83301 12.6068 9.83301 11.9165ZM1.5 10.2505V7.75049C1.5 7.06013 2.05964 6.50049 2.75 6.50049C3.44036 6.50049 4 7.06013 4 7.75049V10.2505C3.99982 10.9407 3.44025 11.5005 2.75 11.5005C2.05975 11.5005 1.50018 10.9407 1.5 10.2505ZM14 10.2505V7.75049C14 7.06013 14.5596 6.50049 15.25 6.50049C15.9404 6.50049 16.5 7.06013 16.5 7.75049V10.2505C16.4998 10.9407 15.9402 11.5005 15.25 11.5005C14.5598 11.5005 14.0002 10.9407 14 10.2505Z"
-                      fill="currentColor"
-                    ></path>
-                  </svg>
-                </div>
-                <span className="[display:var(--force-hide-label)] ps-1 pe-1 text-[13px] font-semibold whitespace-nowrap">
-                  Voice
-                </span>
-              </button>
-            </div>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v2m0 0h3m-3 0H9m6-6a3 3 0 11-6 0V7a3 3 0 116 0v7z" />
+              </svg>
+            </button>
+            <button
+              type="submit"
+              className="flex-shrink-0 flex items-center justify-center text-white bg-black hover:bg-black px-2 py-2 rounded-2xl transition h-10 w-10 sm:w-auto sm:h-auto"
+              disabled={!query.trim()}
+            >
+              <FaArrowUp size={16} />
+            </button>
           </form>
         </div>
-      </div>
+      )}
+      {/* QR Code Modal */}
+      <QrCodeModal open={qrOpen} onClose={() => setQrOpen(false)} imageSrc={qrImg.src || "/src/app/image/QRcode.png"} />
     </div>
   );
 };
