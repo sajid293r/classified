@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
+import { useRouter } from 'next/navigation';
 import { FaArrowUp, FaQrcode, FaBars, FaTimes } from "react-icons/fa";
 import { LayoutDashboard } from "lucide-react";
 import sls from "../services/ServerLinkService";
@@ -11,6 +12,7 @@ import QrCodeModal from "./components/QrCodeModal";
 import qrImg from "./image/QRcode.png";
 
 const Page = () => {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -24,6 +26,8 @@ const Page = () => {
   const [selectedModel, setSelectedModel] = useState("ChatGPT 3.5");
   const [showShaikUI, setShowShaikUI] = useState(true);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
 
   // Connect to backend and setup VoiceChatService only once
   useEffect(() => {
@@ -40,6 +44,7 @@ const Page = () => {
           text = msgObj.message || msgObj.content || (msgObj.choices && msgObj.choices[0]?.message?.content) || '';
         }
         if (msgObj.from === 'bot') {
+          setIsSpeaking(true);
           if (typeof text === 'string' && text.trim() !== '') {
             dispatch(addMessage({ message: text, from: 'bot' }));
           }
@@ -136,6 +141,9 @@ const Page = () => {
             <button className="border border-black text-black px-4 py-2 rounded-full w-full">
               Signup
             </button>
+            <button onClick={() => router.push("/pricing")} className="border border-black text-black px-4 py-2 rounded-full w-full">
+              Upgrade
+          </button>
           </div>
         </div>
       )}
@@ -165,6 +173,9 @@ const Page = () => {
           <button className="border border-black text-black px-4 py-2 rounded-full">
             Signup
           </button>
+          <button onClick={() => router.push("/pricing")} className="border border-black text-black px-4 py-2 rounded-full w-full">
+              Upgrade
+          </button>
         </div>
       </div>
       {/* Centered Shaikh UI with chat */}
@@ -173,7 +184,7 @@ const Page = () => {
           {/* Top: Shaik image and heading */}
           <div className="flex flex-col items-center w-full">
             <img
-              src={isRecording ? "/assistant-transformed.gif" : "/assistant-transformed.png"}
+              src={isSpeaking ? "/assistant-transformed.gif" : "/assistant-transformed.png"}
               alt="Assistant"
               className="w-24 h-24 sm:w-40 sm:h-40 md:w-48 md:h-48 rounded-full mb-2 shadow"
             />
