@@ -27,7 +27,27 @@ const Page = () => {
   const [showShaikUI, setShowShaikUI] = useState(true);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [showGif, setShowGif] = useState(false);
+  const messageTimerRef = useRef(null);
 
+  // Add delay before changing back to PNG
+  useEffect(() => {
+    if (pendingBotMessage) {
+      setShowGif(true);
+      if (messageTimerRef.current) {
+        clearTimeout(messageTimerRef.current);
+      }
+    } else {
+      messageTimerRef.current = setTimeout(() => {
+        setShowGif(false);
+      }, 5000);
+      return () => {
+        if (messageTimerRef.current) {
+          clearTimeout(messageTimerRef.current);
+        }
+      };
+    }
+  }, [pendingBotMessage]);
 
   // Connect to backend and setup VoiceChatService only once
   useEffect(() => {
@@ -184,7 +204,7 @@ const Page = () => {
           {/* Top: Shaik image and heading */}
           <div className="flex flex-col items-center w-full">
             <img
-              src={isSpeaking ? "/assistant-transformed.gif" : "/assistant-transformed.png"}
+              src={showGif ? "/assistant-transformed.gif" : "/assistant-transformed.png"}
               alt="Assistant"
               className="w-24 h-24 sm:w-40 sm:h-40 md:w-48 md:h-48 rounded-full mb-2 shadow"
             />
